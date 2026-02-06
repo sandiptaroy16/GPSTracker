@@ -9,7 +9,7 @@ BluetoothSerial SerialBT;
 #define SIM800_PWR_CTRL 26
 #define GPS_PWR_CTRL 33
 #define SLEEP_TIME_SEC 60  // 5 minutes
-#define GPS_TIMEOUT  60000  // 60 seconds
+#define GPS_TIMEOUT  120000  // 2 min
 #define GSM_TIMEOUT 60000
 String incomingData = "";
 String phoneNumber = "";
@@ -53,13 +53,15 @@ void setup() {
   delay(500);
 
   digitalWrite(GPS_LED, HIGH);
+
+  logMessage("Connecting GPS....");
   bool fix = waitForGPSFix();
   if(fix){
     logMessage("GPS service is On");
     blinkLED(GPS_LED, 3);
   }
   else{
-    logMessage("GPS not working");    
+    logMessage("GPS not working..");    
   }
 
   digitalWrite(SIM800_PWR_CTRL, HIGH);
@@ -68,21 +70,7 @@ void setup() {
   delay(1000);
 
   digitalWrite(ESP32_LED, HIGH);
-  while(true)
-  {
-    sim800.println("AT");
-    delay(500);
-    if(sim800.available()){
-      String resp = sim800.readString();
-      if(resp.indexOf("OK") != -1){
-          logMessage("GSM service is On");          
-          break;
-      }
-    }
-    else{
-      logMessage("GSM connecting...");
-    }
-  }
+  logMessage("Connecting GSM....");
 
   bool gsmFix = waitForNetwork();
   if(gsmFix){
@@ -90,7 +78,7 @@ void setup() {
     blinkLED(ESP32_LED, 3);
   }
   delay(5000);
-
+  
   logMessage("System Ready");
 
   if(networkRegistered()) {
@@ -126,7 +114,6 @@ void loop() {
   if (SerialBT.available()) {
     String c = SerialBT.readString();
     c.trim();
-    Serial.println(c); 
     sim800.println(c);       // show on USB Serial
     if(c == "gps")
     {
@@ -156,7 +143,6 @@ void loop() {
   if(Serial.available()){
     String s = Serial.readString();
     sim800.println(s);
-    SerialBT.println(s);
   }
 
   if (sim800.available()) {
@@ -208,7 +194,7 @@ bool waitForNetwork(){
     while (sim800.available()) {
       resp += sim800.readStringUntil('\n');
     }
-    Serial.println(resp);
+    logMessage(resp);
     // Check registration
     if (resp.indexOf("+CREG:") != -1 && (resp.indexOf(",1") != -1 || resp.indexOf(",5") != -1))
     {
@@ -228,7 +214,7 @@ bool waitForNetwork(){
 }
 
 void sim800PowerOff() {
-  Serial.println("SIM800 POWER OFF");
+  logMessage("SIM800 POWER OFF");
   sim800.println("AT+CMGD=1,4");
   delay(500);
   // Optional clean shutdown via AT command
@@ -261,8 +247,7 @@ void checkVibrationAndCreateAlert(){
 void readFromSim800(){
   // Read SIM800 messages
   incomingData = sim800.readString();
-  Serial.println(incomingData);
-  SerialBT.println(incomingData);
+  logMessage(incomingData);
 
   // New SMS indication
   if (incomingData.indexOf("+CMTI") != -1) {
@@ -325,7 +310,7 @@ void readSMS(int index) {
   body.trim();
   body.toUpperCase();
 
-  Serial.println("📨 SMS BODY: " + body);
+  logMessage("📨 SMS BODY: " + body);
 
   // ---- Process commands ----
   if (body.indexOf("LOC") != -1) {
@@ -356,7 +341,7 @@ void sendLocation(String number) {
 }
 
 void sendSMS(String number, String text) {
-  Serial.println("Sending sms :" + text + " to " + number);
+  logMessage("Sending sms :" + text + " to " + number);
   sim800.print("AT+CMGS=\"");
   sim800.print(number);
   sim800.println("\"");
@@ -374,7 +359,7 @@ void deleteSMS(int index) {
 }
 
 void makeCall(String number) {
-  Serial.println("📞 Calling...");
+  logMessage("📞 Calling...");
   sim800.print("ATD");
   sim800.print(number);
   sim800.println(";");   // semicolon is REQUIRED
@@ -425,8 +410,8 @@ void checkOfflineSMS() {
     body.trim();
     body.toUpperCase();
 
-    Serial.println("📩 Index: " + String(index));
-    Serial.println("Body: " + body);
+    logMessage("📩 Index: " + String(index));
+    logMessage("Body: " + body);
 
     // -------- Phone number --------
     ExtractPhoneNumber(resp);
