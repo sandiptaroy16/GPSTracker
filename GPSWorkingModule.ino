@@ -1,5 +1,12 @@
 #include <TinyGPS++.h>
 #include "BluetoothSerial.h"
+#include <BLEDevice.h>
+#include <BLEScan.h>
+#include <BLEAdvertisedDevice.h>
+
+#define OWNER_UUID "dff47714-ebb7-4b18-b881-adbd1ddb9aab"
+#define RSSI_THRESHOLD -80   // adjust later
+#define SCAN_TIME 3          // seconds
 
 HardwareSerial sim800(2);   // UART2 → SIM800L
 HardwareSerial gpsSerial(1); // UART1 → GPS
@@ -8,7 +15,7 @@ TinyGPSPlus gps;
 BluetoothSerial SerialBT;
 #define SIM800_PWR_CTRL 26
 #define GPS_PWR_CTRL 33
-#define SLEEP_TIME_SEC 60  // 5 minutes
+#define SLEEP_TIME_SEC 180  // 5 minutes
 #define GPS_TIMEOUT  120000  // 2 min
 #define GSM_TIMEOUT 60000
 String incomingData = "";
@@ -23,6 +30,45 @@ String alertNumber = "9874068384";
 bool vibrationCheck = false;
 unsigned long lastSMSTime = 0;
 const unsigned long smsCooldown = 20000;
+bool ownerNearby = false;
+bool alarmEnabled = true;
+BLEScan* pBLEScan;
+
+
+class MyAdvertisedDeviceCallbacks : public BLEAdvertisedDeviceCallbacks {
+  void onResult(BLEAdvertisedDevice advertisedDevice) {
+
+    // Check for service UUID
+    if (advertisedDevice.haveServiceUUID()) {
+      if (advertisedDevice.isAdvertisingService(BLEUUID(OWNER_UUID))) {
+
+        int rssi = advertisedDevice.getRSSI();
+        Serial.print("Owner phone detected | RSSI: ");
+        Serial.println(rssi);
+
+        if (rssi > RSSI_THRESHOLD) {
+          ownerNearby = true;
+          alarmEnabled = false;
+        }
+      }
+    }
+  }
+};
+
+void ownerNearbyCheck(){
+  ownerNearby = false;
+  pBLEScan->start(SCAN_TIME, false);
+  pBLEScan->clearResults();
+
+  if (ownerNearby) {
+    alarmEnabled = false;
+    logMessage("✅ Owner nearby → Alarm DISABLED");
+  } else {
+    alarmEnabled = true;
+    logMessage("🚨 Owner NOT nearby → Alarm ENABLED");
+  }
+  delay(1000);
+}
 
 void setup() {
   Serial.begin(9600);  
@@ -35,6 +81,15 @@ void setup() {
   //digitalWrite(GSM_LED, LOW);
   digitalWrite(GPS_LED, LOW);
   delay(500);
+
+  BLEDevice::init("");
+  pBLEScan = BLEDevice::getScan();
+  pBLEScan->setAdvertisedDeviceCallbacks(new MyAdvertisedDeviceCallbacks());
+  pBLEScan->setActiveScan(true);
+  pBLEScan->setInterval(100);
+  pBLEScan->setWindow(99);
+
+  Serial.println("BLE scan started...");
 
   SerialBT.begin("ESP32_BT_Terminal");
   logMessage("Bluetooth started. Pair ESP32_BT_Terminal");
@@ -92,10 +147,13 @@ void setup() {
   esp_sleep_wakeup_cause_t reason = esp_sleep_get_wakeup_cause();
   if (reason == ESP_SLEEP_WAKEUP_EXT0) {
     logMessage("Wakeup by vibration");
-    //sendSMS(alertNumber, "⚠️ ALERT: Vibration detected!");
-    delay(1000);
-    makeCall(alertNumber);
-    lastSMSTime = millis();
+    ownerNearbyCheck();  
+    if(alarmEnabled){
+      //sendSMS(alertNumber, "⚠️ ALERT: Vibration detected!");
+      delay(1000);      
+      makeCall(alertNumber);
+      lastSMSTime = millis();
+    }
   } else {
     logMessage("Normal wakeup");
   }
@@ -148,9 +206,9 @@ void loop() {
   if (sim800.available()) {
     readFromSim800();
   }
-  //sim800PowerOff();
-  //gpsPowerOff();
-  //esp_deep_sleep_start();
+  sim800PowerOff();
+  gpsPowerOff();
+  esp_deep_sleep_start();
 }
 
 
@@ -235,13 +293,15 @@ void checkVibrationAndCreateAlert(){
 
   if (vibState == HIGH) {
     logMessage("Vibration Detected");
-    if (millis() - lastSMSTime > smsCooldown) {
-      sendSMS(alertNumber, "⚠️ ALERT: Vibration detected!");
+    ownerNearbyCheck();
+    if (alarmEnabled && millis() - lastSMSTime > smsCooldown) {
+      //sendSMS(alertNumber, "⚠️ ALERT: Vibration detected!");
       delay(1000);
       makeCall(alertNumber);
       lastSMSTime = millis();
     }
   }
+  delay(500);
 }
 
 void readFromSim800(){
@@ -359,7 +419,7 @@ void deleteSMS(int index) {
 }
 
 void makeCall(String number) {
-  logMessage("📞 Calling...");
+  logMessage("📞 Calling to " + number);
   sim800.print("ATD");
   sim800.print(number);
   sim800.println(";");   // semicolon is REQUIRED
